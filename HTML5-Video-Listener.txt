@@ -1,0 +1,175 @@
+<script>
+(function () {
+  window.dataLayer = window.dataLayer || [];
+
+  var PROGRESS_MARKERS = [10, 25, 50, 75];
+  var boundVideos = new WeakSet();
+
+  function toInt(n) {
+    n = Number(n);
+    return isFinite(n) ? Math.floor(n) : 0;
+  }
+
+  function getVideoUrl(video) {
+    return video.currentSrc || video.src || video.getAttribute('src') || '';
+  }
+
+  function getVideoTitle(video) {
+    var explicitTitle =
+      video.getAttribute('data-video-title') ||
+      video.getAttribute('title') ||
+      video.getAttribute('aria-label') ||
+      video.getAttribute('data-title');
+
+    if (explicitTitle) return explicitTitle.trim();
+
+    var url = getVideoUrl(video);
+    if (!url) return '';
+
+    try {
+      var clean = url.split('#')[0].split('?')[0];
+      var file = clean.substring(clean.lastIndexOf('/') + 1);
+      return decodeURIComponent(file || '');
+    } catch (e) {
+      return url;
+    }
+  }
+
+  function getVisible(video) {
+    if (document.visibilityState !== 'visible') return false;
+
+    var rect = video.getBoundingClientRect();
+    var vw = window.innerWidth || document.documentElement.clientWidth;
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+
+    if (rect.width <= 0 || rect.height <= 0) return false;
+
+    var visibleX = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
+    var visibleY = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
+    var visibleArea = visibleX * visibleY;
+    var totalArea = rect.width * rect.height;
+
+    if (!totalArea) return false;
+
+    return (visibleArea / totalArea) > 0;
+  }
+
+  function getPercent(video) {
+    var duration = Number(video.duration || 0);
+    var current = Number(video.currentTime || 0);
+
+    if (!duration || duration <= 0 || !isFinite(duration)) return 0;
+
+    var pct = Math.floor((current / duration) * 100);
+    if (pct < 0) return 0;
+    if (pct > 100) return 100;
+    return pct;
+  }
+
+  function pushVideoEvent(video, status, forcedPercent) {
+    var currentTime = toInt(video.currentTime || 0);
+    var duration = toInt(video.duration || 0);
+    var percent = typeof forcedPercent === 'number' ? forcedPercent : getPercent(video);
+
+    window.dataLayer.push({
+      event: 'html5_video',
+      video_provider: 'html5',
+      video_status: status,
+      video_title: getVideoTitle(video),
+      video_url: getVideoUrl(video),
+      video_duration: duration,
+      video_current_time: currentTime,
+      video_elapsed_time: currentTime,
+      video_percent: percent,
+      visible: getVisible(video)
+    });
+  }
+
+  function onPlay(e) {
+    var video = e.target;
+
+    if (!video._html5Started) {
+      video._html5Started = true;
+      pushVideoEvent(video, 'start', 0);
+    } else if (video._html5Paused) {
+      pushVideoEvent(video, 'play');
+    }
+
+    video._html5Paused = false;
+  }
+
+  function onPause(e) {
+    var video = e.target;
+
+    if (!video.ended) {
+      video._html5Paused = true;
+      pushVideoEvent(video, 'pause');
+    }
+  }
+
+  function onEnded(e) {
+    pushVideoEvent(e.target, 'complete', 100);
+  }
+
+  function onSeeking(e) {
+    pushVideoEvent(e.target, 'seeking');
+  }
+
+  function onSeeked(e) {
+    pushVideoEvent(e.target, 'seeked');
+  }
+
+  function onTimeUpdate(e) {
+    var video = e.target;
+    var duration = Number(video.duration || 0);
+
+    if (!duration || duration <= 0 || !isFinite(duration)) return;
+
+    var pct = getPercent(video);
+    video._html5Progress = video._html5Progress || {};
+
+    for (var i = 0; i < PROGRESS_MARKERS.length; i++) {
+      var marker = PROGRESS_MARKERS[i];
+      if (pct >= marker && !video._html5Progress[marker]) {
+        video._html5Progress[marker] = true;
+        pushVideoEvent(video, 'progress', marker);
+      }
+    }
+  }
+
+  function bindVideo(video) {
+    if (!video || boundVideos.has(video)) return;
+
+    boundVideos.add(video);
+
+    video._html5Started = false;
+    video._html5Paused = false;
+    video._html5Progress = {};
+
+    video.addEventListener('play', onPlay, true);
+    video.addEventListener('pause', onPause, true);
+    video.addEventListener('ended', onEnded, true);
+    video.addEventListener('seeking', onSeeking, true);
+    video.addEventListener('seeked', onSeeked, true);
+    video.addEventListener('timeupdate', onTimeUpdate, true);
+  }
+
+  function scanVideos() {
+    var videos = document.querySelectorAll('video');
+    for (var i = 0; i < videos.length; i++) {
+      bindVideo(videos[i]);
+    }
+  }
+
+  scanVideos();
+
+  var observer = new MutationObserver(function () {
+    scanVideos();
+  });
+
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+})();
+</script>
